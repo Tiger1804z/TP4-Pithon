@@ -3,9 +3,9 @@ from pithon.evaluator.primitive import check_type, get_primitive_dict
 from pithon.syntax import (
     PiAssignment, PiBinaryOperation, PiNumber, PiBool, PiStatement, PiProgram, PiSubscript, PiVariable,
     PiIfThenElse, PiNot, PiAnd, PiOr, PiWhile, PiNone, PiList, PiTuple, PiString,
-    PiFunctionDef, PiFunctionCall, PiFor, PiBreak, PiContinue, PiIn, PiReturn
+    PiFunctionDef, PiFunctionCall, PiFor, PiBreak, PiContinue, PiIn, PiReturn,PiClassDef, PiAttribute, PiAttributeAssignment
 )
-from pithon.evaluator.envvalue import EnvValue, VFunctionClosure, VList, VNone, VTuple, VNumber, VBool, VString
+from pithon.evaluator.envvalue import EnvValue, VFunctionClosure, VList, VNone, VTuple, VNumber, VBool, VString, VClassDef ,VObject,VMethodClosure
 
 
 def initial_env() -> EnvFrame:
@@ -72,6 +72,22 @@ def evaluate_stmt(node: PiStatement, env: EnvFrame) -> EnvValue:
         value = evaluate_stmt(node.value, env)
         insert(env, node.name, value)
         return value
+    elif isinstance(node, PiAttribute):
+        target_obj = evaluate_stmt(node.object, env)
+        if not isinstance(target_obj, VObject):
+            raise TypeError(f"Attribut ne peut être accédé sur un objet de type {type(target_obj).__name__}.")
+        if node.attr in target_obj.attributes:
+            return target_obj.attributes[node.attr]
+        else:
+            raise AttributeError(f"L'objet de type {type(target_obj).__name__} n'a pas d'attribut '{node.attr}'.")
+    
+    elif isinstance(node, PiAttributeAssignment):
+        target_obj = evaluate_stmt(node.object, env)
+        value = evaluate_stmt(node.value, env)
+        if not isinstance(target_obj, VObject):
+            raise TypeError(f"Attribut ne peut être assigné à un objet de type {type(target_obj).__name__}.")
+        target_obj.attributes[node.attr] = value
+        return value
 
     elif isinstance(node, PiIfThenElse):
         cond = evaluate_stmt(node.condition, env)
@@ -133,6 +149,22 @@ def evaluate_stmt(node: PiStatement, env: EnvFrame) -> EnvValue:
 
     elif isinstance(node, PiSubscript):
         return _evaluate_subscript(node, env)
+
+    elif isinstance(node, PiClassDef):
+     methods = {}
+
+     for method in node.methods:
+        if isinstance(method, PiFunctionDef):
+            methods[method.name] = VFunctionClosure(method, env)
+
+     class_val = VClassDef(
+        name=node.name,
+        methods=methods
+    )
+     insert(env, node.name, class_val)
+     return class_val
+
+
 
     else:
         raise TypeError(f"Type de nœud non supporté : {type(node)}")
@@ -211,7 +243,31 @@ def _evaluate_function_call(node: PiFunctionCall, env: EnvFrame) -> EnvValue:
     func_val = evaluate_stmt(node.function, env)
     args = [evaluate_stmt(arg, env) for arg in node.args]
     # Fonction primitive
-    if callable(func_val):
+    if isinstance(func_val, VClassDef):
+        obj = VObject(class_def=func_val, attributes={})
+        constructor = func_val.methods.get("__init__")
+        if constructor:
+           call_env = EnvFrame(parent=constructor.closure_env)
+           call_env.insert('self', obj)
+           for i, arg_name in enumerate(constructor.funcdef.arg_names[1:]): # Ignore 'self'
+               if i < len(args):
+                   call_env.insert(arg_name, args[i])
+               else:
+                   raise TypeError("Argument manquant pour le constructeur.")
+           if constructor.funcdef.vararg:
+               varargs = VList(args[len(constructor.funcdef.arg_names)-1:])
+               call_env.insert(constructor.funcdef.vararg, varargs)
+           elif len(args) > len(constructor.funcdef.arg_names) - 1:  # -1 pour 'self'
+               raise TypeError("Trop d'arguments pour le constructeur.")
+
+        try:
+            for stmt in constructor.funcdef.body:
+                evaluate_stmt(stmt, call_env)
+        except ReturnException:
+            pass
+
+        return obj
+    elif callable(func_val):
         return func_val(args)
     # Fonction utilisateur
     if not isinstance(func_val, VFunctionClosure):
@@ -235,7 +291,10 @@ def _evaluate_function_call(node: PiFunctionCall, env: EnvFrame) -> EnvValue:
             result = evaluate_stmt(stmt, call_env)
     except ReturnException as ret:
         return ret.value
+   
+    
     return result
+     
 
 class ReturnException(Exception):
     """Exception pour retourner une valeur depuis une fonction."""
