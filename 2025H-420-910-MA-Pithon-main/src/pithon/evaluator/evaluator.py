@@ -58,7 +58,10 @@ def evaluate_stmt(node: PiStatement, env: EnvFrame) -> EnvValue:
         return VTuple(elements)
 
     elif isinstance(node, PiVariable):
-        return lookup(env, node.name)
+        try:
+            return lookup(env, node.name)
+        except KeyError:
+            raise NameError(f"Variable '{node.name}' non définie.")
 
     elif isinstance(node, PiBinaryOperation):
         # Traite l'opération binaire comme un appel de fonction
@@ -276,7 +279,7 @@ def _evaluate_function_call(node: PiFunctionCall, env: EnvFrame) -> EnvValue:
         return func_val(args)
     # Fonction utilisateur
     elif isinstance(func_val, VMethodClosure):
-        # Appel d'une méthode liée à un objet
+        # Appel d'une méthode liée à un objet 
        method_closure = func_val.function
        instance = func_val.instance
        call_env = EnvFrame(parent=method_closure.closure_env)
@@ -286,6 +289,7 @@ def _evaluate_function_call(node: PiFunctionCall, env: EnvFrame) -> EnvValue:
                call_env.insert(arg_name, args[i])
            else:
                raise TypeError("Argument manquant pour la méthode.")
+         # Gère les arguments variables
        if method_closure.funcdef.vararg:
            varargs = VList(args[len(method_closure.funcdef.arg_names)-1:])
            call_env.insert(method_closure.funcdef.vararg, varargs)
@@ -306,7 +310,8 @@ def _evaluate_function_call(node: PiFunctionCall, env: EnvFrame) -> EnvValue:
         if i < len(args):
             call_env.insert(arg_name, args[i])
         else:
-            raise TypeError("Argument manquant pour la fonction.")
+            raise TypeError(f"La fonction '{funcdef.name}' attend {len(funcdef.arg_names)} arguments, mais {len(args)} ont été donnés.")
+
     if funcdef.vararg:
         varargs = VList(args[len(funcdef.arg_names):])
         call_env.insert(funcdef.vararg, varargs)
@@ -320,6 +325,8 @@ def _evaluate_function_call(node: PiFunctionCall, env: EnvFrame) -> EnvValue:
         return ret.value
     except Exception as e:
         print(f"Erreur lors de l'évaluation de la fonction : {e}")
+    if not isinstance(func_val, VFunctionClosure):
+        raise TypeError("Tentative d'appel d'un objet non-fonction.")
     return result
      
 
