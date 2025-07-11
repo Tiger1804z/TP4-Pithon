@@ -78,8 +78,13 @@ def evaluate_stmt(node: PiStatement, env: EnvFrame) -> EnvValue:
             raise TypeError(f"Attribut ne peut être accédé sur un objet de type {type(target_obj).__name__}.")
         if node.attr in target_obj.attributes:
             return target_obj.attributes[node.attr]
+        elif node.attr in target_obj.class_def.methods:
+            # Si c'est une méthode, retourne une closure de méthode
+            method_closure = target_obj.class_def.methods[node.attr]
+            return VMethodClosure(function=method_closure, instance=target_obj)
         else:
-            raise AttributeError(f"L'objet de type {type(target_obj).__name__} n'a pas d'attribut '{node.attr}'.")
+            raise AttributeError(f"L'attribut '{node.attr}' n'existe pas sur l'objet de type {target_obj.class_def.name}.")
+
     
     elif isinstance(node, PiAttributeAssignment):
         target_obj = evaluate_stmt(node.object, env)
@@ -270,6 +275,28 @@ def _evaluate_function_call(node: PiFunctionCall, env: EnvFrame) -> EnvValue:
     elif callable(func_val):
         return func_val(args)
     # Fonction utilisateur
+    elif isinstance(func_val, VMethodClosure):
+        # Appel d'une méthode liée à un objet
+       method_closure = func_val.function
+       instance = func_val.instance
+       call_env = EnvFrame(parent=method_closure.closure_env)
+       call_env.insert('self', instance)  # 'self' pour la méthode
+       for i, arg_name in enumerate(method_closure.funcdef.arg_names[1:]):  # Ignore 'self'
+           if i < len(args):
+               call_env.insert(arg_name, args[i])
+           else:
+               raise TypeError("Argument manquant pour la méthode.")
+       if method_closure.funcdef.vararg:
+           varargs = VList(args[len(method_closure.funcdef.arg_names)-1:])
+           call_env.insert(method_closure.funcdef.vararg, varargs)
+       elif len(args) > len(method_closure.funcdef.arg_names) - 1:
+           raise TypeError("Trop d'arguments pour la méthode.")
+       try:
+           for stmt in method_closure.funcdef.body:
+               result = evaluate_stmt(stmt, call_env)
+       except ReturnException as ret:
+           return ret.value
+       return VNone(value=None)
     if not isinstance(func_val, VFunctionClosure):
         raise TypeError("Tentative d'appel d'un objet non-fonction.")
     funcdef = func_val.funcdef
@@ -291,8 +318,8 @@ def _evaluate_function_call(node: PiFunctionCall, env: EnvFrame) -> EnvValue:
             result = evaluate_stmt(stmt, call_env)
     except ReturnException as ret:
         return ret.value
-   
-    
+    except Exception as e:
+        print(f"Erreur lors de l'évaluation de la fonction : {e}")
     return result
      
 
